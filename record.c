@@ -291,15 +291,7 @@ int record_wav_to_dat(const char *wav_path, int tape_fd, int pno, int *running_f
     channels        = swap_uint16(raw_hdr.channels);
     bits_per_sample = swap_uint16(raw_hdr.bits_per_sample);
 
-    if (pno == 1)
-        write_dat_leadin(tape_fd, 300, sample_rate, channels);
-    else if (pno == DT_INVALID)
-    {
-        write_dat_leadout(tape_fd, 300, sample_rate, channels, running_frame_counter);
-        close(wav_fd);
-        return 0;
-    }
-    /* Determine actual audio data payload size per DAT frame based on rate */
+   /* Determine actual audio data payload size per DAT frame based on rate */
     if (sample_rate == 48000) {
         audio_bytes_per_frame = DTDA_DATASIZE48K; /* 5760 bytes */
     } else if (sample_rate == 44100) {
@@ -308,9 +300,32 @@ int record_wav_to_dat(const char *wav_path, int tape_fd, int pno, int *running_f
         audio_bytes_per_frame = DTDA_DATASIZE32K; /* 3840 bytes */
     } else {
 	    fprintf(stderr, "Invalid sample rate %i:  Needs to be either 32kHz, 44.11kHz or 48kHz\n", sample_rate);
+	    close(wav_fd);
 	    return 1;
     }
 
+    if (channels != 2){
+	    fprintf(stderr, "Invalid number of channels %i, only 2 supported\n", channels);
+	    close(wav_fd);
+	    return 1;
+    }
+
+    if (bits_per_sample != 16){
+	    fprintf(stderr, "Invalid bitdepth %i, only 16bits supported\n", bits_per_sample);
+	    close(wav_fd);
+	    return 1;
+    }
+    
+    
+    if (pno == 1)
+        write_dat_leadin(tape_fd, 300, sample_rate, channels);
+    else if (pno == DT_INVALID)
+    {
+        write_dat_leadout(tape_fd, 300, sample_rate, channels, running_frame_counter);
+        close(wav_fd);
+        return 0;
+    }
+ 
     printf("\n=== Program %d: %s (%u Hz, %u ch, %u-bit) ===\n",
            pno, wav_path, sample_rate, channels, bits_per_sample);
 
