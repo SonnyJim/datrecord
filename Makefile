@@ -2,7 +2,7 @@
 TARGET = datrecord
 
 # Source files
-SRCS   = datrecord.c
+SRCS   = datrecord.c record.c
 OBJS   = $(SRCS:.c=.o)
 
 # Compiler & Linker flags for SGI IRIX
