@@ -28,7 +28,7 @@ static int open_tape_audio_device(const char *tape_path) {
     return tape_fd;
 }
 
-static int process_single_wav(const char *wav_path, const char *tape_path, int pno) {
+static int process_single_wav(const char *path, const char *tape_path, int pno) {
     int tape_fd;
     int running_frame_count = 0;
     int status;
@@ -36,12 +36,13 @@ static int process_single_wav(const char *wav_path, const char *tape_path, int p
     tape_fd = open_tape_audio_device(tape_path);
     if (tape_fd < 0) return 1;
 
-    status = record_wav_to_dat(wav_path, tape_fd, pno, &running_frame_count);
+    status = record_wav_to_dat(path, tape_fd, pno, &running_frame_count);
 
-    close(tape_fd);
     if (status == 0) {
         printf("\nSingle file recorded successfully. Total audio frames written: %d\n", running_frame_count);
+        record_wav_to_dat(path, tape_fd, DT_INVALID, &running_frame_count);//Trigger the lead-out
     }
+    close(tape_fd);
     return status;
 }
 
@@ -49,6 +50,7 @@ static int process_playlist(const char *playlist_path, const char *tape_path, in
     FILE *list_fp;
     int tape_fd;
     char line[1024];
+    char *path;
     int current_pno = start_pno;
     int running_frame_count = 0;
     int success_count = 0;
@@ -69,7 +71,7 @@ static int process_playlist(const char *playlist_path, const char *tape_path, in
         char *newline = strpbrk(line, "\r\n");
         if (newline) *newline = '\0';
 
-        char *path = line;
+        path = line;
         while (*path == ' ' || *path == '\t') path++;
 
         if (*path == '\0' || *path == '#') continue;
@@ -82,7 +84,7 @@ static int process_playlist(const char *playlist_path, const char *tape_path, in
             break;
         }
     }
-
+    record_wav_to_dat(path, tape_fd, DT_INVALID, &running_frame_count);//Trigger the lead-out
     fclose(list_fp);
     close(tape_fd);
 
