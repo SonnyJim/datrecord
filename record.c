@@ -56,7 +56,8 @@ int record_wav_to_dat(const char *wav_path, int tape_fd, int pno, int *running_f
     } else if (sample_rate == 32000) {
         audio_bytes_per_frame = DTDA_DATASIZE32K; /* 3840 bytes */
     } else {
-        audio_bytes_per_frame = DTDA_DATASIZE44K;
+	    fprintf(stderr, "Invalid sample rate %i:  Needs to be either 32kHz, 44.11kHz or 48kHz\n", sample_rate);
+	    return 1;
     }
 
     printf("\n=== Program %d: %s (%u Hz, %u ch, %u-bit) ===\n",
