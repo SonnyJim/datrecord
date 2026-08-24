@@ -89,7 +89,7 @@ int record_wav_to_dat(const char *wav_path, int tape_fd, int pno, int *running_f
 
         /* --- Sub ID (`sid`) Setup --- */
         /* Set Bit 0 of ctrlid (0x01) for Start ID flag */
-        frame.subcode.sid.ctrlid = is_start_id_active ? 0x01 : 0x00;
+        frame.subcode.sid.ctrlid = is_start_id_active ? DTS_START : 0x00;
         frame.subcode.sid.dataid = DT_AUDIO_USE;
 
         if (is_start_id_active) {
