@@ -10,6 +10,121 @@ unsigned char compute_pack_parity(const unsigned char *pack_bytes) {
     return parity;
 }
 
+int write_dat_leadin(int tape_fd, int leadin_frames, unsigned int sample_rate, unsigned short channels)
+{
+    DTFRAME frame;
+    int frame_no;
+
+    fprintf (stdout, "Writing lead-in\n");
+    if (leadin_frames < 1) {
+        fprintf(stderr, "Invalid lead-in length: %d frames\n",
+                leadin_frames);
+        return 1;
+    }
+
+    for (frame_no = 0; frame_no < leadin_frames; frame_no++) {
+        struct dttimepack *ptime;
+        struct dttimepack *atime;
+        unsigned long atime_frame;
+
+        /* Zeroed frame = digital silence plus unused packs */
+        memset(&frame, 0, sizeof(frame));
+
+        /* --- Main ID: must match the following audio --- */
+        frame.subcode.mid.fmtid        = DT_AUDIO_USE;
+        frame.subcode.mid.emphasis     = DTM_PREEMPH_OFF;
+        frame.subcode.mid.quantization = DTM_QUAN_16_LINEAR;
+        frame.subcode.mid.numchans =
+            (channels == 4) ? DTM_NCHAN_FOUR : DTM_NCHAN_TWO;
+
+        if (sample_rate == 48000)
+            frame.subcode.mid.sampfreq = DT_FREQ48000;
+        else if (sample_rate == 44100)
+            frame.subcode.mid.sampfreq = DT_FREQ44100;
+        else if (sample_rate == 32000)
+            frame.subcode.mid.sampfreq = DT_FREQ32000;
+        else {
+            fprintf(stderr, "Invalid DAT lead-in sample rate: %u\n",
+                    sample_rate);
+            return 1;
+        }
+
+        /*
+         * --- Sub ID ---
+         *
+         * Lead-in program number is 0BB.
+         * No Start ID.
+         */
+        frame.subcode.sid.ctrlid = 0;
+        frame.subcode.sid.dataid = DT_AUDIO_USE;
+
+        frame.subcode.sid.pno1 = 0x0;
+        frame.subcode.sid.pno2 = 0x0B;
+        frame.subcode.sid.pno3 = 0x0B;
+
+        frame.subcode.sid.numpacks = 2;
+
+        /*
+         * Pack 0: Program Time.
+         *
+         * Program time is not meaningful during lead-in, so mark
+         * its index and timecode as invalid.
+         */
+        ptime = (struct dttimepack *)&frame.subcode.packs[0];
+        ptime->id   = DTP_PTIME;
+        ptime->flag = 0;
+
+        ptime->pno1 = 0;
+        ptime->pno2 = DT_INVALID;
+        ptime->pno3 = DT_INVALID;
+
+        ptime->index.dhi = DT_INVALID;
+        ptime->index.dlo = DT_INVALID;
+
+        ptime->tc.hhi = DT_INVALID;
+        ptime->tc.hlo = DT_INVALID;
+        ptime->tc.mhi = DT_INVALID;
+        ptime->tc.mlo = DT_INVALID;
+        ptime->tc.shi = DT_INVALID;
+        ptime->tc.slo = DT_INVALID;
+        ptime->tc.fhi = DT_INVALID;
+        ptime->tc.flo = DT_INVALID;
+
+        ptime->parity =
+            compute_pack_parity((unsigned char *)ptime);
+
+        /*
+         * Pack 1: Absolute Time.
+         *
+         * Count down toward zero through the lead-in.
+         * Final lead-in frame is A-Time 00:00:00.00.
+         */
+        atime = (struct dttimepack *)&frame.subcode.packs[1];
+        atime->id   = DTP_ATIME;
+        atime->flag = 0;
+
+        atime->pno1 = 0;
+        atime->pno2 = DT_INVALID;
+        atime->pno3 = DT_INVALID;
+
+        atime->index.dhi = DT_INVALID;
+        atime->index.dlo = DT_INVALID;
+
+        atime_frame = (unsigned long)(leadin_frames - frame_no - 1);
+        DTframetotc(atime_frame, &atime->tc);
+
+        atime->parity =
+            compute_pack_parity((unsigned char *)atime);
+
+        if (write(tape_fd, &frame, sizeof(frame)) != sizeof(frame)) {
+            perror("Error writing DAT lead-in frame");
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
 /* Record WAV audio file to DAT tape drive */
 int record_wav_to_dat(const char *wav_path, int tape_fd, int pno, int *running_frame_counter) {
     int wav_fd;
@@ -48,6 +163,8 @@ int record_wav_to_dat(const char *wav_path, int tape_fd, int pno, int *running_f
     channels        = swap_uint16(raw_hdr.channels);
     bits_per_sample = swap_uint16(raw_hdr.bits_per_sample);
 
+    if (pno == 1)
+        write_dat_leadin(tape_fd, 300, sample_rate, channels);
     /* Determine actual audio data payload size per DAT frame based on rate */
     if (sample_rate == 48000) {
         audio_bytes_per_frame = DTDA_DATASIZE48K; /* 5760 bytes */
