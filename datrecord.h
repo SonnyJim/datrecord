@@ -44,6 +44,6 @@ static inline unsigned short swap_uint16(unsigned short val) {
 unsigned char compute_pack_parity(const unsigned char *pack_bytes);
 
 /* Core recording procedure declaration */
-int record_wav_to_dat(const char *wav_path, const char *tape_path, int pno);
+int record_wav_to_dat(const char *wav_path, int tape_fd, int pno, int *frame_counter);
 
 #endif /* DATRECORD_H */
