@@ -14,6 +14,8 @@
 #define WAV_HEADER_SIZE 44
 #define TAPE_DEV_DEFAULT "/dev/tape"
 
+/* Rigid structure packing for MIPS alignment rules */
+#pragma pack(1)
 typedef struct {
     char           riff[4];
     unsigned int   overall_size;
@@ -27,23 +29,31 @@ typedef struct {
     unsigned short block_align;
     unsigned short bits_per_sample;
 } wav_header_t;
+#pragma pack(0)
 
-/* Inline Byte-swapping helpers for Little-Endian WAV data on Big-Endian IRIX (MIPS) */
-static inline unsigned int swap_uint32(unsigned int val) {
-    return ((val >> 24) & 0x000000FF) |
-           ((val >> 8)  & 0x0000FF00) |
-           ((val << 8)  & 0x00FF0000) |
-           ((val << 24) & 0xFF000000);
+/* 
+ * Standard static C89/IRIX inline macros.
+ * Handles both MIPSpro (CC / cc) and GCC environments smoothly.
+ */
+#if defined(__sgi) && !defined(__GNUC__)
+#  define INLINE_FUNC static __inline
+#else
+#  define INLINE_FUNC static inline
+#endif
+
+INLINE_FUNC unsigned int swap_uint32(unsigned int val) {
+    return ((val >> 24) & 0x000000FFU) |
+           ((val >> 8)  & 0x0000FF00U) |
+           ((val << 8)  & 0x00FF0000U) |
+           ((val << 24) & 0xFF000000U);
 }
 
-static inline unsigned short swap_uint16(unsigned short val) {
+INLINE_FUNC unsigned short swap_uint16(unsigned short val) {
     return (unsigned short)(((val >> 8) & 0x00FF) | ((val << 8) & 0xFF00));
 }
 
-/* Parity calculation helper declaration */
+/* Function declarations */
 unsigned char compute_pack_parity(const unsigned char *pack_bytes);
-
-/* Core recording procedure declaration */
 int record_wav_to_dat(const char *wav_path, int tape_fd, int pno, int *frame_counter);
 
 #endif /* DATRECORD_H */
