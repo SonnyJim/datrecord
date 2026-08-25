@@ -1,5 +1,10 @@
 #include "datrecord.h"
 
+/* DAT Frame Definitions & Constraints */
+#define LEADIN_FRAMES   600   /* 12 seconds @ standard DAT rates (IEC 61119 standard requires >= 9s) */
+#define LEADOUT_FRAMES  300   /* 6 to 9 seconds */
+#define START_ID_FRAMES 300   /* 9 seconds duration for active Start ID flags */
+
 /* Compute Parity byte across bytes 0-6 of subcode pack */
 unsigned char compute_pack_parity(const unsigned char *pack_bytes) {
     unsigned char parity = 0;
@@ -15,7 +20,7 @@ int write_dat_leadin(int tape_fd, int leadin_frames, unsigned int sample_rate, u
     DTFRAME frame;
     int frame_no;
 
-    fprintf(stdout, "Writing lead-in\n");
+    fprintf(stdout, "Writing lead-in (%d frames)...\n", leadin_frames);
     if (leadin_frames < 1) {
         fprintf(stderr, "Invalid lead-in length: %d frames\n", leadin_frames);
         return 1;
@@ -42,7 +47,7 @@ int write_dat_leadin(int tape_fd, int leadin_frames, unsigned int sample_rate, u
             return 1;
         }
 
-        /* --- Sub ID (Lead-in = 0BB) --- */
+        /* --- Sub ID (Lead-in PNO = 0BB) --- */
         frame.subcode.sid.ctrlid   = 0;
         frame.subcode.sid.dataid   = DT_AUDIO_USE;
         frame.subcode.sid.pno1     = 0x0;
@@ -50,7 +55,7 @@ int write_dat_leadin(int tape_fd, int leadin_frames, unsigned int sample_rate, u
         frame.subcode.sid.pno3     = 0x0B;
         frame.subcode.sid.numpacks = 2;
 
-        /* Pack 0: Program Time (Invalid in Lead-in) */
+        /* Pack 0: Program Time (Invalid during Lead-in) */
         ptime = (struct dttimepack *)&frame.subcode.packs[0];
         ptime->id   = DTP_PTIME;
         ptime->flag = 0;
@@ -67,7 +72,7 @@ int write_dat_leadin(int tape_fd, int leadin_frames, unsigned int sample_rate, u
         ptime->tc.fhi = DT_INVALID; ptime->tc.flo = DT_INVALID;
         ptime->parity = compute_pack_parity((unsigned char *)ptime);
 
-        /* Pack 1: Absolute Time (Counts down to 00:00:00.00) */
+        /* Pack 1: Absolute Time (Counts down to 00:00:00.00 at end of Lead-in) */
         atime = (struct dttimepack *)&frame.subcode.packs[1];
         atime->id   = DTP_ATIME;
         atime->flag = 0;
@@ -95,7 +100,7 @@ int write_dat_leadout(int tape_fd, int leadout_frames, unsigned int sample_rate,
     DTFRAME frame;
     int frame_no;
 
-    fprintf(stdout, "Writing leadout\n");
+    fprintf(stdout, "Writing leadout...\n");
 
     if (leadout_frames < 1 || running_frame_counter == NULL) {
         fprintf(stderr, "Invalid lead-out parameters\n");
@@ -214,23 +219,17 @@ int record_wav_to_dat(const char *wav_path, int tape_fd, int pno, int *running_f
         return 1;
     }
 
-    if (channels != 2) {
-        fprintf(stderr, "Invalid number of channels %u, only 2 supported\n", channels);
+    if (channels != 2 || bits_per_sample != 16) {
+        fprintf(stderr, "Unsupported format: requires 2 channels, 16-bit PCM\n");
         close(wav_fd);
         return 1;
     }
 
-    if (bits_per_sample != 16) {
-        fprintf(stderr, "Invalid bitdepth %u, only 16-bit supported\n", bits_per_sample);
-        close(wav_fd);
-        return 1;
-    }
-
-    /* Handle Special DAT Markers: Lead-In (pno=1) / Lead-Out (pno=DT_INVALID) */
-    if (pno == 1) {
-        write_dat_leadin(tape_fd, 300, sample_rate, channels);
+    /* Handle Lead-In (pno=1 & at start of tape) / Lead-Out (pno=DT_INVALID) */
+    if (pno == 1 && *running_frame_counter == 0) {
+        write_dat_leadin(tape_fd, LEADIN_FRAMES, sample_rate, channels);
     } else if (pno == DT_INVALID) {
-        write_dat_leadout(tape_fd, 300, sample_rate, channels, running_frame_counter);
+        write_dat_leadout(tape_fd, LEADOUT_FRAMES, sample_rate, channels, running_frame_counter);
         close(wav_fd);
         return 0;
     }
@@ -240,13 +239,13 @@ int record_wav_to_dat(const char *wav_path, int tape_fd, int pno, int *running_f
 
     /* 2. Audio & Subcode Streaming Loop */
     while ((bytes_read = read(wav_fd, frame.audio, audio_bytes_per_frame)) > 0) {
-        if (bytes_read < DTDA_DATASIZE) {
-            memset(frame.audio + bytes_read, 0, DTDA_DATASIZE - bytes_read);
+        if ((size_t)bytes_read < audio_bytes_per_frame) {
+            memset(frame.audio + bytes_read, 0, audio_bytes_per_frame - bytes_read);
         }
 
         memset(&frame.subcode, 0, sizeof(frame.subcode));
 
-        /* --- Main ID (`mid`) Setup --- */
+        /* Main ID Setup */
         frame.subcode.mid.fmtid        = DT_AUDIO_USE;
         frame.subcode.mid.emphasis     = DTM_PREEMPH_OFF;
         frame.subcode.mid.quantization = DTM_QUAN_16_LINEAR;
@@ -255,33 +254,24 @@ int record_wav_to_dat(const char *wav_path, int tape_fd, int pno, int *running_f
         if (sample_rate == 48000)      frame.subcode.mid.sampfreq = DT_FREQ48000;
         else if (sample_rate == 44100) frame.subcode.mid.sampfreq = DT_FREQ44100;
         else if (sample_rate == 32000) frame.subcode.mid.sampfreq = DT_FREQ32000;
-        else                           frame.subcode.mid.sampfreq = DT_FREQ44100;
 
         /* BCD Program Number Encoding */
         pno_bcd = ((pno / 100) % 10 << 8) | ((pno / 10) % 10 << 4) | (pno % 10);
-        is_start_id_active = (track_frame_counter < 300);
+        is_start_id_active = (track_frame_counter < START_ID_FRAMES);
 
-        /* --- Sub ID (`sid`) Setup --- */
+        /* Sub ID Setup (PNO persists across the entire track) */
         frame.subcode.sid.ctrlid = is_start_id_active ? (DTS_START | DTS_PRIORITYID) : 0x00;
         frame.subcode.sid.dataid = DT_AUDIO_USE;
-
-        if (is_start_id_active) {
-            frame.subcode.sid.pno1 = (pno_bcd >> 8) & 0x0F;
-            frame.subcode.sid.pno2 = (pno_bcd >> 4) & 0x0F;
-            frame.subcode.sid.pno3 = pno_bcd & 0x0F;
-        } else {
-            /* Standard DAT PNO Inactive Bit Mask: 0x0BB */
-            frame.subcode.sid.pno1 = 0x00;
-            frame.subcode.sid.pno2 = 0x0B;
-            frame.subcode.sid.pno3 = 0x0B;
-        }
+        frame.subcode.sid.pno1   = (pno_bcd >> 8) & 0x0F;
+        frame.subcode.sid.pno2   = (pno_bcd >> 4) & 0x0F;
+        frame.subcode.sid.pno3   = pno_bcd & 0x0F;
         frame.subcode.sid.numpacks = 2;
 
-        /* --- Pack 0: Program Time (P-Time) --- */
+        /* Pack 0: Program Time (P-Time) */
         prg_pack = (struct dttimepack *)&frame.subcode.packs[0];
         prg_pack->id   = DTP_PTIME;
         prg_pack->flag = 0;
-        prg_pack->pno1 = (pno_bcd >> 8) & 0x07;
+        prg_pack->pno1 = (pno_bcd >> 8) & 0x0F;
         prg_pack->pno2 = (pno_bcd >> 4) & 0x0F;
         prg_pack->pno3 = pno_bcd & 0x0F;
         prg_pack->index.dhi = 0;
@@ -290,7 +280,7 @@ int record_wav_to_dat(const char *wav_path, int tape_fd, int pno, int *running_f
         DTframetotc(track_frame_counter, &prg_pack->tc);
         prg_pack->parity = compute_pack_parity((unsigned char *)prg_pack);
 
-        /* --- Pack 1: Absolute Time (A-Time) --- */
+        /* Pack 1: Absolute Time (A-Time) */
         abs_pack = (struct dttimepack *)&frame.subcode.packs[1];
         abs_pack->id   = DTP_ATIME;
         abs_pack->flag = 0;
