@@ -100,7 +100,7 @@ int write_dat_leadout(int tape_fd, int leadout_frames, unsigned int sample_rate,
     DTFRAME frame;
     int frame_no;
 
-    fprintf(stdout, "Writing leadout...\n");
+    fprintf(stdout, "\nWriting leadout...\n");
 
     if (leadout_frames < 1 || running_frame_counter == NULL) {
         fprintf(stderr, "Invalid lead-out parameters\n");
